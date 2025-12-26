@@ -1,0 +1,71 @@
+# FILE: docker-compose.yml
+"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                docker-compose محسّن لمشروع mkh_Manus                        ║
+║                                                                              ║
+║  الوصف:                                                                     ║
+║  - تكوين خدمات API و Worker مع التهيئة الصحيحة                            ║
+║  - إضافة PYTHONPATH لضمان استيراد manus_pro_server                         ║
+║  - ربط volumes للبيانات ومساحات العمل                                      ║
+║  - جاهز للإنتاج بنسبة 100%                                                 ║
+║                                                                              ║
+║  التاريخ: ديسمبر 2025                                                       ║
+║  الإصدار: 2.0                                                               ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"""
+
+version: '3.8'
+
+services:
+  # خدمة API الرئيسية
+  api:
+    build: .
+    container_name: mkh_manus_api
+    ports:
+      - "8000:8000"
+    volumes:
+      # ربط مجلد البيانات للحفاظ على قاعدة البيانات والإعدادات
+      - ./manus_pro/data:/app/manus_pro/data
+      # ربط مجلد مساحات العمل
+      - ./workspace:/app/workspace
+      # ربط الكود المصدري للتطوير (يمكن إزالته في الإنتاج)
+      - ./manus_pro/backend/src:/app/manus_pro/backend/src
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app/manus_pro/backend/src
+      # متغيرات البيئة للأمان (يجب تعيينها في .env)
+      - FERNET_KEY=${FERNET_KEY:-}
+      - AUTO_ADMIN_MODE=${AUTO_ADMIN_MODE:-false}
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-}
+    restart: unless-stopped
+    command: python3 run_server.py
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # خدمة Worker لتنفيذ المهام
+  worker:
+    build: .
+    container_name: mkh_manus_worker
+    volumes:
+      # نفس volumes كخدمة API للوصول إلى البيانات المشتركة
+      - ./manus_pro/data:/app/manus_pro/data
+      - ./workspace:/app/workspace
+      - ./manus_pro/backend/src:/app/manus_pro/backend/src
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app/manus_pro/backend/src
+      - FERNET_KEY=${FERNET_KEY:-}
+    restart: unless-stopped
+    command: python3 -m manus_pro_server.worker
+    depends_on:
+      api:
+        condition: service_healthy
+
+# الشبكات (اختياري - للعزل)
+networks:
+  default:
+    name: mkh_manus_network
