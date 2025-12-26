@@ -1,0 +1,219 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# docker-compose محسّن 100% لمشروع mkh_Manus
+# يتضمن: API, Worker, PostgreSQL, Redis, MinIO, Flower
+# التاريخ: ديسمبر 2025
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+services:
+  # ═══ PostgreSQL Database ═══
+  postgres:
+    image: postgres:16-alpine
+    container_name: mkh_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mkh_manus}
+      POSTGRES_USER: ${POSTGRES_USER:-mkh_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mkh_secure_password_2025}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mkh_user} -d ${POSTGRES_DB:-mkh_manus}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - mkh_network
+
+  # ═══ Redis Cache & Message Broker ═══
+  redis:
+    image: redis:7-alpine
+    container_name: mkh_redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-mkh_redis_pass_2025}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - mkh_network
+
+  # ═══ MinIO Object Storage ═══
+  minio:
+    image: minio/minio:latest
+    container_name: mkh_minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-mkh_minio_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-mkh_minio_secure_2025}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - mkh_network
+
+  # ═══ API Service ═══
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mkh_manus_api
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./manus_pro/data:/app/manus_pro/data
+      - ./workspace:/app/workspace
+      - ./manus_pro/backend/src:/app/manus_pro/backend/src
+    environment:
+      # Python
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app/manus_pro/backend/src
+      
+      # Security
+      - FERNET_KEY=${FERNET_KEY}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - AUTO_ADMIN_MODE=${AUTO_ADMIN_MODE:-false}
+      - ADMIN_TOKEN=${ADMIN_TOKEN}
+      
+      # Database
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-mkh_user}:${POSTGRES_PASSWORD:-mkh_secure_password_2025}@postgres:5432/${POSTGRES_DB:-mkh_manus}
+      
+      # Redis
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-mkh_redis_pass_2025}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-mkh_redis_pass_2025}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-mkh_redis_pass_2025}@redis:6379/1
+      
+      # MinIO
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-mkh_minio_admin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-mkh_minio_secure_2025}
+      - MINIO_BUCKET=${MINIO_BUCKET:-mkh-attachments}
+      - MINIO_SECURE=false
+      
+      # Monitoring
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - mkh_network
+
+  # ═══ Celery Worker ═══
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mkh_celery_worker
+    volumes:
+      - ./manus_pro/data:/app/manus_pro/data
+      - ./workspace:/app/workspace
+      - ./manus_pro/backend/src:/app/manus_pro/backend/src
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app/manus_pro/backend/src
+      - FERNET_KEY=${FERNET_KEY}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-mkh_user}:${POSTGRES_PASSWORD:-mkh_secure_password_2025}@postgres:5432/${POSTGRES_DB:-mkh_manus}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-mkh_redis_pass_2025}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-mkh_redis_pass_2025}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-mkh_redis_pass_2025}@redis:6379/1
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-mkh_minio_admin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-mkh_minio_secure_2025}
+      - MINIO_BUCKET=${MINIO_BUCKET:-mkh-attachments}
+      - MINIO_SECURE=false
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    command: celery -A manus_pro_server.celery_app worker --loglevel=info --concurrency=4
+    networks:
+      - mkh_network
+
+  # ═══ Celery Beat (Scheduler) ═══
+  beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mkh_celery_beat
+    volumes:
+      - ./manus_pro/data:/app/manus_pro/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app/manus_pro/backend/src
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-mkh_redis_pass_2025}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-mkh_redis_pass_2025}@redis:6379/1
+    depends_on:
+      - redis
+      - worker
+    restart: unless-stopped
+    command: celery -A manus_pro_server.celery_app beat --loglevel=info
+    networks:
+      - mkh_network
+
+  # ═══ Flower (Celery Monitoring) ═══
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mkh_flower
+    ports:
+      - "${FLOWER_PORT:-5555}:5555"
+    environment:
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-mkh_redis_pass_2025}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-mkh_redis_pass_2025}@redis:6379/1
+      - FLOWER_BASIC_AUTH=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-flower_admin_2025}
+    depends_on:
+      - redis
+      - worker
+    restart: unless-stopped
+    command: celery -A manus_pro_server.celery_app flower --port=5555
+    networks:
+      - mkh_network
+
+# ═══ Volumes ═══
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  minio_data:
+    driver: local
+
+# ═══ Networks ═══
+networks:
+  mkh_network:
+    driver: bridge

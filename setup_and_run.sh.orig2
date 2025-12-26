@@ -1,0 +1,64 @@
+#!/bin/bash
+# =============================================================================
+# سكريبت التثبيت والتشغيل المؤتمت بالكامل لـ mkh_Manus
+# =============================================================================
+
+set -e
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$PROJECT_ROOT"
+
+echo "==================================="
+echo "mkh_Manus - التثبيت المؤتمت"
+echo "==================================="
+
+# 1. إنشاء البيئة الافتراضية
+echo "[1/5] إنشاء البيئة الافتراضية..."
+if [ ! -d ".venv" ]; then
+    python3 -m venv .venv
+fi
+
+source .venv/bin/activate
+
+# 2. ترقية pip
+echo "[2/5] ترقية pip..."
+pip3 install -q -U pip setuptools wheel
+
+# 3. تثبيت التبعيات الأساسية
+echo "[3/5] تثبيت التبعيات الأساسية..."
+pip3 install -q pydantic openai tenacity pyyaml loguru fastapi uvicorn httpx cryptography orjson python-multipart slowapi structlog prometheus-client
+
+# 4. تثبيت التبعيات الإضافية (بدون crawl4ai لتجنب التعارضات)
+echo "[4/5] تثبيت التبعيات الإضافية..."
+pip3 install -q --no-deps tiktoken html2text pillow colorama playwright docker pytest pytest-asyncio mcp tomli boto3 requests beautifulsoup4 huggingface-hub || true
+
+# 5. تثبيت تبعيات Frontend
+echo "[5/5] تثبيت تبعيات Frontend..."
+cd manus_pro/frontend
+npm install --silent
+npm run build
+cd ../..
+
+echo ""
+echo "==================================="
+echo "✅ التثبيت اكتمل بنجاح!"
+echo "==================================="
+echo ""
+echo "لتشغيل النظام، استخدم الأوامر التالية في 3 نوافذ terminal منفصلة:"
+echo ""
+echo "Terminal 1 (Backend API):"
+echo "  cd $PROJECT_ROOT"
+echo "  source .venv/bin/activate"
+echo "  PYTHONPATH=manus_pro/backend/src python -m manus_pro_server"
+echo ""
+echo "Terminal 2 (Worker):"
+echo "  cd $PROJECT_ROOT"
+echo "  source .venv/bin/activate"
+echo "  PYTHONPATH=manus_pro/backend/src python -m manus_pro_server.worker"
+echo ""
+echo "Terminal 3 (Frontend):"
+echo "  cd $PROJECT_ROOT/manus_pro/frontend"
+echo "  npm run dev"
+echo ""
+echo "ثم افتح المتصفح على: http://localhost:5173"
+echo ""

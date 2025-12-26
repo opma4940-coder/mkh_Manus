@@ -1,0 +1,66 @@
+{
+  "name": "mkh_Manus Development",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest",
+      "moby": true
+    },
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  
+  "forwardPorts": [
+    8000,
+    5432,
+    6379,
+    9000,
+    9001,
+    5555
+  ],
+  
+  "portsAttributes": {
+    "8000": {
+      "label": "API & Dashboard",
+      "onAutoForward": "notify"
+    },
+    "5555": {
+      "label": "Flower (Celery Monitor)",
+      "onAutoForward": "notify"
+    },
+    "9001": {
+      "label": "MinIO Console",
+      "onAutoForward": "notify"
+    },
+    "5432": {
+      "label": "PostgreSQL"
+    },
+    "6379": {
+      "label": "Redis"
+    },
+    "9000": {
+      "label": "MinIO API"
+    }
+  },
+  
+  "postCreateCommand": "echo '✅ Codespace ready! Run: docker compose up --build' && chmod +x test_system.sh",
+  
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-azuretools.vscode-docker",
+        "redhat.vscode-yaml",
+        "esbenp.prettier-vscode"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "files.autoSave": "afterDelay",
+        "editor.formatOnSave": true
+      }
+    }
+  },
+  
+  "remoteUser": "vscode"
+}
