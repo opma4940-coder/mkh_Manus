@@ -34,7 +34,7 @@ if requirements_file.exists():
 
 setup(
     name="manus_pro_server",
-    version="2.0.0",
+    ,
     description="خادم mkh_Manus المحسّن - نظام إدارة المهام والوكلاء الذكية",
     long_description=long_description,
     long_description_content_type="text/markdown",

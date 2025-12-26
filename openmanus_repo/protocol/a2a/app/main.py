@@ -71,7 +71,7 @@ async def main(host: str = "localhost", port: int = 10000):
             name="Manus Agent",
             description="A versatile agent that can solve various tasks using multiple tools including MCP-based tools",
             url=f"http://{host}:{port}/",
-            version="1.0.0",
+            ,
             defaultInputModes=A2AManus.SUPPORTED_CONTENT_TYPES,
             defaultOutputModes=A2AManus.SUPPORTED_CONTENT_TYPES,
             capabilities=capabilities,

@@ -1,23 +1,33 @@
-# FILE: scripts/smoke_test.sh
-# =============================================================================
-# [وصف الملف]
-# Smoke Test بسيط وقابل للتشغيل دون الحاجة لتشغيل الخدمات:
-# - يتحقق من وجود الملفات الأساسية
-# - يتحقق من أن مسارات Manus-Pro موجودة
-#
-# ملاحظة:
-# Smoke الحقيقي (HTTP) يُفضّل تشغيله عبر curl بعد تشغيل API/worker.
-# =============================================================================
+#!/bin/bash
+set -e
 
-set -euo pipefail
-IFS=$'\n\t'
+echo "Starting Smoke Tests for mkh_Manus..."
 
-test -f "README.md"
-test -f "SECURITY.md"
-test -f "ASSURANCE.md"
-test -f "validation.sh"
+# Check Backend Health
+echo "Testing Backend Root..."
+curl -s -f http://localhost:8000/ || (echo "Backend root failed" && exit 1)
 
-test -d "manus_pro/backend/src/manus_pro_server"
-test -d "manus_pro/frontend/src"
+# Test Upload Request
+echo "Testing Upload Request..."
+curl -s -X POST http://localhost:8000/uploads/request \
+     -H "Content-Type: application/json" \
+     -d '{"filename": "test.txt", "content_type": "text/plain", "size": 1024}' || (echo "Upload request failed" && exit 1)
 
-echo "[smoke] basic files OK"
+# Test Task Creation
+echo "Testing Task Creation..."
+curl -s -X POST http://localhost:8000/tasks \
+     -H "Content-Type: application/json" \
+     -d '{"title": "Test Task", "payload": {"action": "test"}}' || (echo "Task creation failed" && exit 1)
+
+# Test Agent Dispatch
+echo "Testing Agent Dispatch..."
+curl -s -X POST http://localhost:8000/agents/dispatch \
+     -H "Content-Type: application/json" \
+     -d '{"task_id": "test-task-id"}' || (echo "Agent dispatch failed" && exit 1)
+
+# Test Task Replay (Dry Run)
+echo "Testing Task Replay (Dry Run)..."
+curl -s -X POST "http://localhost:8000/tasks/test-task-id/replay?dry_run=true" \
+     -H "Content-Type: application/json" || (echo "Task replay failed" && exit 1)
+
+echo "All Smoke Tests Passed Successfully!"

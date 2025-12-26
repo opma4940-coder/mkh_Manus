@@ -1,6 +1,6 @@
 {
   "project_name": "mkh_Manus",
-  "version": "1.0.0",
+  ,
   "description": "نظام متقدم يحول OpenManus من CLI إلى تطبيق ويب تفاعلي مع واجهة مستخدم حديثة",
   "language": "python",
   "language_version": "3.11",

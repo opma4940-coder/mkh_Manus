@@ -84,7 +84,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="mkh_Manus API",
-    version="1.0.0",
+    ,
     description="Dashboard API فوق OpenManus مع Runtime طويل الأمد.",
     lifespan=lifespan, # استخدام Lifespan
 )

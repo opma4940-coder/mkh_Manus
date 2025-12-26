@@ -1,6 +1,6 @@
 {
   "name": "chart_visualization",
-  "version": "1.0.0",
+  ,
   "main": "src/index.ts",
   "devDependencies": {
     "@types/node": "^22.10.1",

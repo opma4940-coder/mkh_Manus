@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="mkh_Manus Unified API",
-    version="1.0.0",
+    ,
     lifespan=lifespan,
 )
 
