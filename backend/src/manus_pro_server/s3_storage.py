@@ -206,6 +206,38 @@ def download_file(
         logger.error(f"Failed to download file {object_name}: {e}")
         raise
 
+def download_file_to_tmp(
+    object_name: str,
+    bucket_name: str = MINIO_BUCKET
+) -> str:
+    """
+    تحميل ملف إلى مجلد مؤقت
+    
+    Args:
+        object_name: اسم الكائن
+        bucket_name: اسم Bucket
+    
+    Returns:
+        مسار الملف المؤقت
+    """
+    try:
+        import tempfile
+        
+        # إنشاء ملف مؤقت
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=Path(object_name).suffix)
+        temp_path = temp_file.name
+        temp_file.close()
+        
+        # تنزيل الملف
+        download_file(object_name, temp_path, bucket_name)
+        
+        logger.info(f"File downloaded to tmp: {object_name} -> {temp_path}")
+        return temp_path
+        
+    except Exception as e:
+        logger.error(f"Failed to download file to tmp {object_name}: {e}")
+        raise
+
 def get_object_bytes(
     object_name: str,
     bucket_name: str = MINIO_BUCKET
@@ -391,6 +423,43 @@ def get_object_info(
         raise
 
 # ═══ Cleanup Operations ═══
+def move_to_quarantine(
+    object_name: str,
+    bucket_name: str = MINIO_BUCKET,
+    quarantine_bucket: str = "mkh-quarantine"
+) -> None:
+    """
+    نقل ملف إلى الحجر الصحي
+    
+    Args:
+        object_name: اسم الكائن
+        bucket_name: اسم Bucket الأصلي
+        quarantine_bucket: اسم Bucket الحجر الصحي
+    """
+    try:
+        client = get_minio_client()
+        
+        # التأكد من وجود bucket الحجر الصحي
+        ensure_bucket_exists(quarantine_bucket)
+        
+        # نسخ الملف إلى الحجر الصحي
+        from minio.commonconfig import CopySource
+        
+        client.copy_object(
+            quarantine_bucket,
+            object_name,
+            CopySource(bucket_name, object_name)
+        )
+        
+        # حذف الملف الأصلي
+        delete_object(object_name, bucket_name)
+        
+        logger.info(f"File moved to quarantine: {object_name}")
+        
+    except Exception as e:
+        logger.error(f"Failed to move file to quarantine {object_name}: {e}")
+        raise
+
 def cleanup_expired_attachments() -> int:
     """
     تنظيف المرفقات المنتهية

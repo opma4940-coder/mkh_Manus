@@ -11,6 +11,18 @@ echo "════════════════════════�
 echo "🚀 بدء عملية نشر نظام mkh_Manus"
 echo "═══════════════════════════════════════════════════════════════════════════════"
 
+# التحقق من وجود Docker
+if ! command -v docker &> /dev/null; then
+    echo "❌ Docker غير مثبت. يرجى تثبيت Docker أولاً."
+    exit 1
+fi
+
+# التحقق من وجود Docker Compose
+if ! command -v docker-compose &> /dev/null; then
+    echo "❌ Docker Compose غير مثبت. يرجى تثبيت Docker Compose أولاً."
+    exit 1
+fi
+
 # التحقق من وجود ملف .env
 if [ ! -f .env ]; then
     echo "⚠️  ملف .env غير موجود، سيتم نسخه من .env.example"
@@ -36,7 +48,14 @@ docker-compose up -d postgres
 # الانتظار حتى تصبح قاعدة البيانات جاهزة
 echo ""
 echo "⏳ انتظار جاهزية قاعدة البيانات..."
-sleep 10
+for i in {1..30}; do
+    if docker-compose exec -T postgres pg_isready -U ${POSTGRES_USER:-mkh_user} &> /dev/null; then
+        echo "✅ قاعدة البيانات جاهزة"
+        break
+    fi
+    echo "   محاولة $i/30..."
+    sleep 2
+done
 
 # تطبيق الـ migrations
 echo ""
@@ -50,18 +69,47 @@ docker-compose up -d redis minio
 
 # الانتظار حتى تصبح الخدمات جاهزة
 echo ""
-echo "⏳ انتظار جاهزية الخدمات..."
-sleep 5
+echo "⏳ انتظار جاهزية Redis و MinIO..."
+sleep 10
+
+# إنشاء bucket في MinIO
+echo ""
+echo "📦 إنشاء Bucket في MinIO..."
+docker-compose exec -T minio mc alias set myminio http://localhost:9000 ${MINIO_ROOT_USER:-mkh_minio_admin} ${MINIO_ROOT_PASSWORD:-mkh_minio_secure_2025} 2>/dev/null || true
+docker-compose exec -T minio mc mb myminio/${MINIO_BUCKET:-mkh-attachments} 2>/dev/null || echo "   Bucket موجود بالفعل"
 
 # تشغيل باقي الخدمات
 echo ""
 echo "🚀 تشغيل جميع الخدمات..."
 docker-compose up -d
 
+# الانتظار حتى تصبح جميع الخدمات جاهزة
+echo ""
+echo "⏳ انتظار جاهزية جميع الخدمات..."
+sleep 15
+
 # عرض حالة الخدمات
 echo ""
 echo "📊 حالة الخدمات:"
 docker-compose ps
+
+# فحص صحة الخدمات
+echo ""
+echo "🔍 فحص صحة الخدمات..."
+
+# فحص API
+if curl -f http://localhost:${API_PORT:-8000}/api/v1/health &> /dev/null; then
+    echo "✅ API يعمل بشكل صحيح"
+else
+    echo "⚠️  API لا يستجيب (قد يحتاج وقت إضافي للبدء)"
+fi
+
+# فحص MinIO
+if curl -f http://localhost:${MINIO_PORT:-9000}/minio/health/live &> /dev/null; then
+    echo "✅ MinIO يعمل بشكل صحيح"
+else
+    echo "⚠️  MinIO لا يستجيب"
+fi
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════════════════════"
@@ -76,4 +124,5 @@ echo "   - Flower (Celery): http://localhost:${FLOWER_PORT:-5555}"
 echo ""
 echo "📝 لعرض السجلات: docker-compose logs -f"
 echo "🛑 لإيقاف النظام: docker-compose down"
+echo "🔄 لإعادة التشغيل: docker-compose restart"
 echo ""

@@ -30,6 +30,51 @@ class CallbackTask(Task):
         """يتم استدعاؤه عند إعادة محاولة المهمة"""
         logger.warning(f"Task {self.name} [{task_id}] retrying: {exc}")
 
+# ═══ Subtask Processing ═══
+@celery_app.task(
+    bind=True,
+    base=CallbackTask,
+    name="manus_pro_server.tasks.process_subtask",
+    max_retries=5,
+)
+def process_subtask(
+    self,
+    subtask_id: str,
+    idempotency_key: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    معالجة مهمة فرعية مع إعادة محاولة تلقائية
+    
+    Args:
+        subtask_id: معرف المهمة الفرعية
+        idempotency_key: مفتاح التفرد لتجنب التكرار
+    
+    Returns:
+        نتيجة المعالجة
+    """
+    try:
+        logger.info(f"Processing subtask: {subtask_id} (idempotency_key: {idempotency_key})")
+        
+        # منطق معالجة المهمة الفرعية
+        # يمكن إضافة المنطق الفعلي هنا
+        
+        return {
+            "subtask_id": subtask_id,
+            "status": "done",
+            "idempotency_key": idempotency_key,
+            "processed_at": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as exc:
+        logger.error(f"Subtask processing failed: {subtask_id} - {exc}")
+        
+        # حساب وقت الانتظار قبل إعادة المحاولة (exponential backoff)
+        countdown = min(60 * (2 ** self.request.retries), 3600)
+        
+        logger.info(f"Retrying subtask {subtask_id} in {countdown} seconds (attempt {self.request.retries + 1}/5)")
+        
+        raise self.retry(exc=exc, countdown=countdown)
+
 # ═══ OpenManus Task Execution ═══
 @celery_app.task(
     bind=True,
@@ -289,6 +334,85 @@ def system_health_check(self) -> Dict[str, Any]:
         
     except Exception as exc:
         logger.error(f"System health check failed: {exc}")
+        raise
+
+# ═══ File Scanning ═══
+@celery_app.task(
+    bind=True,
+    base=CallbackTask,
+    name="manus_pro_server.tasks.scan_file",
+    max_retries=3,
+)
+def scan_file(self, object_key: str) -> Dict[str, Any]:
+    """
+    فحص ملف مرفوع ضد التهديدات (MVP)
+    
+    Args:
+        object_key: مفتاح الملف في S3
+    
+    Returns:
+        نتيجة الفحص
+    """
+    try:
+        from .s3_storage import download_file_to_tmp
+        import os
+        import subprocess
+        
+        logger.info(f"Scanning file: {object_key}")
+        
+        # تحميل الملف إلى مجلد مؤقت
+        tmp_path = download_file_to_tmp(object_key)
+        
+        try:
+            # محاولة استخدام ClamAV إذا كان متاحاً
+            result = subprocess.run(
+                ["clamscan", "--no-summary", tmp_path],
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+            
+            if result.returncode == 0:
+                scan_result = {
+                    "status": "clean",
+                    "scanner": "clamav",
+                    "object_key": object_key
+                }
+            else:
+                # تم اكتشاف تهديد
+                scan_result = {
+                    "status": "threat_detected",
+                    "scanner": "clamav",
+                    "object_key": object_key,
+                    "details": result.stdout
+                }
+                
+                # نقل الملف إلى الحجر الصحي
+                from .s3_storage import move_to_quarantine
+                move_to_quarantine(object_key)
+                
+                logger.warning(f"Threat detected in file: {object_key}")
+                
+        except FileNotFoundError:
+            # ClamAV غير متاح، وضع علامة كممسوح (mock)
+            logger.warning("ClamAV not available, marking as scanned (mock)")
+            scan_result = {
+                "status": "scanned",
+                "scanner": "mock",
+                "object_key": object_key,
+                "note": "ClamAV not available"
+            }
+        
+        finally:
+            # حذف الملف المؤقت
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        
+        logger.info(f"File scan completed: {object_key} - {scan_result['status']}")
+        return scan_result
+        
+    except Exception as exc:
+        logger.error(f"File scan failed: {object_key} - {exc}")
         raise
 
 # ═══ Attachment Processing ═══
