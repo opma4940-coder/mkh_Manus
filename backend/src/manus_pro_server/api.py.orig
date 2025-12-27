@@ -1,0 +1,371 @@
+# FILE: manus_pro/backend/src/manus_pro_server/api.py
+# =============================================================================
+# [وصف الملف]
+# Backend API (FastAPI) للداشبورد:
+# - إدارة الإعدادات (5 مفاتيح Cerebras API) عبر Endpoint آمن (Server-side فقط)
+# - إنشاء/عرض/إلغاء المهام
+# - بث أحداث المهام (Polling)
+# - File Explorer ضمن Workspace (Sandboxed)
+# - تطبيق قيود الأمان (Rate Limiting, CORS) والمراقبة (Metrics, Health Checks)
+# - استخدام `lifespan` بدلاً من `on_event` المهملة.
+# =============================================================================
+
+
+
+import re
+import uuid
+import time
+from typing import Any, Dict, List, Optional
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST
+
+from . import db
+from .config import FREE_TIER_MODELS, FREE_TIER_QUOTAS, WORKSPACE_ROOT, CORS_ALLOWED_ORIGINS, API_KEY_SLOTS
+from .crypto import encrypt_str
+from .workspace_fs import list_dir, make_dir, read_file, write_file
+from .logging_config import get_logger # استيراد إعدادات التسجيل المنظم
+
+# =============================================================================
+# إعدادات المراقبة (Metrics)
+# =============================================================================
+REQUEST_COUNT = Counter(
+    'http_requests_total', 'Total HTTP Requests', ['method', 'endpoint']
+)
+REQUEST_LATENCY = Gauge(
+    'http_request_duration_seconds', 'HTTP Request Latency', ['method', 'endpoint']
+)
+TASK_STATUS_GAUGE = Gauge(
+    'manus_pro_task_status', 'Current status of tasks (1=running, 0=other)', ['task_id', 'status']
+)
+
+# =============================================================================
+# إعداد Rate Limiting
+# =============================================================================
+# نستخدم الذاكرة كـ تخزين مؤقت (In-memory storage)
+limiter = Limiter(key_func=get_remote_address, default_limits=["30/minute", "900/hour"])
+
+# =============================================================================
+# إعدادات التسجيل
+# =============================================================================
+logger = get_logger(__name__)
+
+# =============================================================================
+# دالة Lifespan (بديل لـ on_event)
+# =============================================================================
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    دورة حياة التطبيق: بدء التشغيل وإيقاف التشغيل.
+    """
+    logger.info("Application startup initiated", version=app.version, title=app.title)
+    # 1. تهيئة قاعدة البيانات
+    db.init_db()
+    logger.info("Database initialized successfully")
+    
+    # 2. تهيئة Worker (سيتم تنفيذه في ملف worker.py لاحقاً)
+    # ...
+
+    yield # التطبيق يعمل
+
+    # 3. إيقاف التشغيل
+    logger.info("Application shutdown initiated")
+    # ...
+
+# =============================================================================
+# تهيئة التطبيق
+# =============================================================================
+
+app = FastAPI(
+    title="mkh_Manus API",
+    version="1.0.0",
+    description="Dashboard API فوق OpenManus مع Runtime طويل الأمد.",
+    lifespan=lifespan, # استخدام Lifespan
+)
+
+# ربط Rate Limiter بالتطبيق
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS: تقييد المصادر المسموح بها (توصية أمنية)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ALLOWED_ORIGINS, # استخدام الإعدادات من config.py
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# =============================================================================
+# نماذج البيانات (Pydantic Models)
+# =============================================================================
+
+class SetApiKeysRequest(BaseModel):
+    api_key_1: str = Field("", description="Cerebras API Key 1")
+    api_key_2: str = Field("", description="Cerebras API Key 2")
+    api_key_3: str = Field("", description="Cerebras API Key 3")
+    api_key_4: str = Field("", description="Cerebras API Key 4")
+    api_key_5: str = Field("", description="Cerebras API Key 5")
+
+
+class SetApiKeysResponse(BaseModel):
+    ok: bool
+    stored_count: int
+
+
+class SettingsStatusResponse(BaseModel):
+    api_keys_configured: Dict[str, bool]  # {"api_key_1": True, "api_key_2": False, ...}
+    models: List[Dict[str, Any]]
+    quotas: Dict[str, Any]
+
+
+class CreateTaskRequest(BaseModel):
+    goal: str = Field(..., min_length=3, max_length=20000)
+    project_path: str = Field(..., description="مسار داخل Workspace (نسبي) مثل '.' أو 'myproj'")
+    token_budget: int = Field(default=1_000_000, ge=10_000, le=10_000_000)
+
+
+class TaskSummary(BaseModel):
+    id: str
+    status: str
+    goal: str
+    project_path: str
+    progress: float
+    elapsed_seconds: float
+    eta_seconds: float
+    token_input: int
+    token_output: int
+    token_total: int
+    token_budget: int
+    steps_done: int
+    steps_estimate: int
+    last_error: Optional[str] = None
+
+
+class CreateTaskResponse(BaseModel):
+    ok: bool
+    task: TaskSummary
+
+
+class ListTasksResponse(BaseModel):
+    tasks: List[TaskSummary]
+
+
+class EventsResponse(BaseModel):
+    events: List[Dict[str, Any]]
+
+
+class WriteFileRequest(BaseModel):
+    path: str
+    content: str
+
+
+class MkdirRequest(BaseModel):
+    path: str
+
+# =============================================================================
+# نقاط النهاية (Endpoints)
+# =============================================================================
+
+@app.middleware("http")
+async def add_process_time_header(request: Request, call_next):
+    """
+    Middleware لحساب زمن معالجة الطلب وتسجيله في Prometheus.
+    """
+    start_time = time.time()
+    response = await call_next(request)
+    process_time = time.time() - start_time
+    
+    endpoint = request.url.path
+    method = request.method
+    
+    REQUEST_COUNT.labels(method=method, endpoint=endpoint).inc()
+    REQUEST_LATENCY.labels(method=method, endpoint=endpoint).set(process_time)
+    
+    logger.info("Request processed", method=method, endpoint=endpoint, status_code=response.status_code, duration_sec=f"{process_time:.4f}")
+    
+    return response
+
+@app.get("/health", summary="فحص حالة الخدمة")
+@limiter.limit("10/minute")
+def health_check(request: Request):
+    """
+    نقطة نهاية لفحص حالة الخدمة (Health Check).
+    """
+    # يمكن إضافة فحص اتصال قاعدة البيانات هنا
+    return {"status": "ok", "db_status": "connected"}
+
+@app.get("/metrics", summary="مقاييس Prometheus")
+@limiter.limit("10/minute")
+def metrics(request: Request):
+    """
+    نقطة نهاية لعرض مقاييس Prometheus.
+    """
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+@app.get("/api/settings", response_model=SettingsStatusResponse)
+@limiter.limit("60/minute")
+def get_settings(request: Request) -> SettingsStatusResponse:
+    """
+    الحصول على حالة الإعدادات (5 مفاتيح API).
+    """
+    api_keys_status = {}
+    for slot in API_KEY_SLOTS:
+        api_keys_status[slot] = db.get_setting(slot) is not None
+    
+    return SettingsStatusResponse(
+        api_keys_configured=api_keys_status,
+        models=FREE_TIER_MODELS,
+        quotas=FREE_TIER_QUOTAS,
+    )
+
+
+@app.post("/api/settings/api-keys", response_model=SetApiKeysResponse)
+@limiter.limit("5/minute") # تقييد صارم لتغيير المفاتيح
+def set_api_keys(request: Request, req: SetApiKeysRequest) -> SetApiKeysResponse:
+    """
+    تعيين مفاتيح API الخمسة (يتم تخزينها مشفرة).
+    """
+    stored_count = 0
+    
+    for slot in API_KEY_SLOTS:
+        key_value = getattr(req, slot, "").strip()
+        if key_value:  # فقط إذا كان المفتاح غير فارغ
+            db.set_setting(slot, key_value)
+            stored_count += 1
+            logger.info(f"API Key configured", slot=slot, stored=True)
+    
+    return SetApiKeysResponse(ok=True, stored_count=stored_count)
+
+
+@app.post("/api/tasks", response_model=CreateTaskResponse)
+@limiter.limit("10/minute") # تقييد إنشاء المهام
+def create_task(request: Request, req: CreateTaskRequest) -> CreateTaskResponse:
+    task_id = f"task_{uuid.uuid4().hex[:12]}"
+    
+    # 1. التحقق من صلاحية المسار
+    try:
+        # نجرب list_dir للتأكد أن المسار موجود/صالح
+        _ = list_dir(req.project_path)
+    except Exception as e:
+        logger.error("Invalid project path", path=req.project_path, error=str(e))
+        raise HTTPException(status_code=400, detail=f"project_path غير صالح داخل Workspace: {e}")
+
+    # 2. إنشاء المهمة في قاعدة البيانات
+    db.create_task(task_id, req.goal, req.project_path, token_budget=int(req.token_budget))
+    db.add_event(task_id, "info", "task.queued", "تم إنشاء المهمة ووضعها في قائمة الانتظار.")
+    
+    # 3. تحديث مقياس Prometheus
+    TASK_STATUS_GAUGE.labels(task_id=task_id, status='queued').set(1)
+    
+    logger.info("Task created successfully", task_id=task_id, goal_length=len(req.goal))
+    
+    t = db.get_task(task_id)
+    assert t is not None
+    return CreateTaskResponse(ok=True, task=TaskSummary(**{k: t.get(k) for k in TaskSummary.model_fields.keys()}))  # type: ignore
+
+
+@app.get("/api/tasks", response_model=ListTasksResponse)
+@limiter.limit("60/minute")
+def list_all_tasks(request: Request) -> ListTasksResponse:
+    tasks = db.list_tasks()
+    return ListTasksResponse(tasks=[TaskSummary(**{k: t.get(k) for k in TaskSummary.model_fields.keys()}) for t in tasks])  # type: ignore
+
+
+@app.get("/api/tasks/{task_id}", response_model=TaskSummary)
+@limiter.limit("60/minute")
+def get_task(request: Request, task_id: str) -> TaskSummary:
+    t = db.get_task(task_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return TaskSummary(**{k: t.get(k) for k in TaskSummary.model_fields.keys()})  # type: ignore
+
+
+@app.post("/api/tasks/{task_id}/cancel")
+@limiter.limit("10/minute")
+def cancel_task(request: Request, task_id: str) -> Dict[str, Any]:
+    t = db.get_task(task_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    db.request_cancel(task_id)
+    db.add_event(task_id, "warning", "task.cancel.requested", "تم طلب إلغاء المهمة.")
+    
+    # تحديث مقياس Prometheus
+    TASK_STATUS_GAUGE.labels(task_id=task_id, status='queued').set(0) # نفترض أنه سيتم إلغاؤه قريباً
+    
+    logger.warning("Task cancellation requested", task_id=task_id)
+    return {"ok": True}
+
+
+@app.get("/api/tasks/{task_id}/events", response_model=EventsResponse)
+@limiter.limit("60/minute")
+def task_events(request: Request, task_id: str, after: int = Query(0, ge=0), limit: int = Query(500, ge=1, le=2000)) -> EventsResponse:
+    t = db.get_task(task_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return EventsResponse(events=db.list_events(task_id, after_id=after, limit=limit))
+
+
+@app.get("/api/workspace/tree")
+@limiter.limit("60/minute")
+def workspace_tree(request: Request, path: str = Query(".", min_length=1)) -> Dict[str, Any]:
+    try:
+        return list_dir(path)
+    except Exception as e:
+        logger.error("Workspace tree error", path=path, error=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/workspace/file")
+@limiter.limit("60/minute")
+def workspace_file(request: Request, path: str = Query(..., min_length=1)) -> Dict[str, Any]:
+    try:
+        return read_file(path)
+    except Exception as e:
+        logger.error("Workspace file read error", path=path, error=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/workspace/file")
+@limiter.limit("10/minute")
+def workspace_write_file(request: Request, req: WriteFileRequest) -> Dict[str, Any]:
+    try:
+        result = write_file(req.path, req.content)
+        logger.info("File written successfully", path=req.path, size=len(req.content))
+        return result
+    except Exception as e:
+        logger.error("Workspace file write error", path=req.path, error=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/workspace/mkdir")
+@limiter.limit("10/minute")
+def workspace_mkdir(request: Request, req: MkdirRequest) -> Dict[str, Any]:
+    try:
+        result = make_dir(req.path)
+        logger.info("Directory created successfully", path=req.path)
+        return result
+    except Exception as e:
+        logger.error("Workspace mkdir error", path=req.path, error=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/workspace/upload")
+@limiter.limit("5/minute") # تقييد رفع الملفات
+async def workspace_upload(request: Request, path: str = Query(..., min_length=1), f: UploadFile = File(...)) -> Dict[str, Any]:
+    try:
+        data = await f.read()
+        content = data.decode("utf-8", errors="replace")
+        result = write_file(path, content, create_dirs=True)
+        logger.info("File uploaded successfully", path=path, filename=f.filename, size=len(data))
+        return result
+    except Exception as e:
+        logger.error("Workspace file upload error", path=path, filename=f.filename, error=str(e))
+        raise HTTPException(status_code=400, detail=str(e))

@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mkh-manus-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mkh-manus-api
+  template:
+    metadata:
+      labels:
+        app: mkh-manus-api
+    spec:
+      containers:
+      - name: api
+        image: mkh-manus:latest
+        ports:
+        - containerPort: 8000
+        envFrom:
+        - configMapRef:
+            name: mkh-manus-config
+        - secretRef:
+            name: mkh-manus-secrets
+        resources:
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mkh-manus-service
+spec:
+  selector:
+    app: mkh-manus-api
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: LoadBalancer

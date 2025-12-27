@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.egg-info/
+venv/
+.pytest_cache/
+
+# ملفات التبعيات الكبيرة التي يجب استثناؤها
+venv/
+node_modules/
+*.map
+
