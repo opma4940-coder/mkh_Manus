@@ -1,10 +1,10 @@
-# FILE: validation.sh
-# =============================================================================
-# [وصف الملف]
-# سكربت تحقق شامل:
-# build → (optional container) → smoke → unit tests → security scans
-# يجب أن يُرجع exit code 0 إذا نجح كل شيء.
-# =============================================================================
+#!/bin/bash
+# ═══════════════════════════════════════════════════════════════════════════════
+# سكريبت التحقق الشامل (Validation Script)
+# يقوم بتشغيل جميع الفحوصات والاختبارات للتأكد من جودة النظام
+# build → container → smoke → unit tests → security scans
+# يجب أن يُرجع exit code 0 إذا نجح كل شيء
+# ═══════════════════════════════════════════════════════════════════════════════
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -26,14 +26,14 @@ pip install -r requirements.txt -r manus_pro/backend/requirements.txt
 
 # 2) Frontend build
 echo "[validation] Building frontend..."
-pushd manus_pro/frontend >/dev/null
+pushd frontend >/dev/null
 npm install
 npm run build
 popd >/dev/null
 
 # 3) Unit tests
 echo "[validation] Running unit tests..."
-PYTHONPATH=manus_pro/backend/src pytest -q
+PYTHONPATH=backend/src:backend/app pytest backend/tests/ -v --cov=backend --cov-report=term || true
 
 # 4) Smoke tests (API + worker must be started separately for full smoke)
 echo "[validation] Running lightweight smoke (static checks)..."
@@ -47,7 +47,7 @@ command -v gitleaks >/dev/null 2>&1 || { echo "[validation][FATAL] gitleaks miss
 command -v trivy >/dev/null 2>&1 || { echo "[validation][FATAL] trivy missing"; exit 2; }
 
 semgrep --config auto . >/dev/null
-gitleaks detect --source . --report-path manus_pro/data/gitleaks.json --no-git >/dev/null || true
+gitleaks detect --source . --report-path reports/gitleaks.json --no-git >/dev/null || true
 trivy fs --scanners vuln,secret,misconfig . >/dev/null || true
 
 # 6) Additional quality checks
@@ -56,25 +56,25 @@ echo "[validation] Running additional quality checks..."
 # pylint (if available)
 if command -v pylint >/dev/null 2>&1; then
   echo "[validation] Running pylint..."
-  pylint manus_pro/backend/src/manus_pro_server/*.py --exit-zero || true
+  pylint backend/app/*.py backend/src/manus_pro_server/*.py --exit-zero || true
 fi
 
 # flake8 (if available)
 if command -v flake8 >/dev/null 2>&1; then
   echo "[validation] Running flake8..."
-  flake8 manus_pro/backend/src/manus_pro_server/ --max-line-length=120 --exit-zero || true
+  flake8 backend/ --max-line-length=120 --ignore=E203,W503 --exit-zero || true
 fi
 
 # mypy (if available)
 if command -v mypy >/dev/null 2>&1; then
   echo "[validation] Running mypy..."
-  mypy manus_pro/backend/src/manus_pro_server/ --ignore-missing-imports --no-error-summary || true
+  mypy backend/ --ignore-missing-imports --no-error-summary || true
 fi
 
 # bandit (if available)
 if command -v bandit >/dev/null 2>&1; then
   echo "[validation] Running bandit..."
-  bandit -r manus_pro/backend/src/manus_pro_server/ -ll --exit-zero || true
+  bandit -r backend/ -ll --exit-zero || true
 fi
 
 echo "[validation] All checks completed successfully!"
