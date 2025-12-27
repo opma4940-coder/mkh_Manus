@@ -77,13 +77,13 @@ services:
     ports:
       - "${API_PORT:-8000}:8000"
     volumes:
-      - ./manus_pro/data:/app/manus_pro/data
+      - ./data:/app/data
       - ./workspace:/app/workspace
-      - ./manus_pro/backend/src:/app/manus_pro/backend/src
+      - ./backend/src:/app/backend/src
     environment:
       # Python
       - PYTHONUNBUFFERED=1
-      - PYTHONPATH=/app/manus_pro/backend/src
+      - PYTHONPATH=/app/backend/src
       
       # Security
       - FERNET_KEY=${FERNET_KEY}
@@ -133,12 +133,12 @@ services:
       dockerfile: Dockerfile
     container_name: mkh_celery_worker
     volumes:
-      - ./manus_pro/data:/app/manus_pro/data
+      - ./data:/app/data
       - ./workspace:/app/workspace
-      - ./manus_pro/backend/src:/app/manus_pro/backend/src
+      - ./backend/src:/app/backend/src
     environment:
       - PYTHONUNBUFFERED=1
-      - PYTHONPATH=/app/manus_pro/backend/src
+      - PYTHONPATH=/app/backend/src
       - FERNET_KEY=${FERNET_KEY}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-mkh_user}:${POSTGRES_PASSWORD:-mkh_secure_password_2025}@postgres:5432/${POSTGRES_DB:-mkh_manus}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-mkh_redis_pass_2025}@redis:6379/0
@@ -170,10 +170,10 @@ services:
       dockerfile: Dockerfile
     container_name: mkh_celery_beat
     volumes:
-      - ./manus_pro/data:/app/manus_pro/data
+      - ./data:/app/data
     environment:
       - PYTHONUNBUFFERED=1
-      - PYTHONPATH=/app/manus_pro/backend/src
+      - PYTHONPATH=/app/backend/src
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-mkh_redis_pass_2025}@redis:6379/0
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-mkh_redis_pass_2025}@redis:6379/1
     depends_on:

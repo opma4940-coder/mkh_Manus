@@ -20,7 +20,7 @@ from pathlib import Path
 
 # إضافة مسار manus_pro_server إلى PYTHONPATH
 project_root = Path(__file__).parent
-backend_src = project_root / "manus_pro" / "backend" / "src"
+backend_src = project_root / "backend" / "src"
 if backend_src.exists():
     sys.path.insert(0, str(backend_src))
 

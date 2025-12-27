@@ -20,10 +20,9 @@ echo "════════════════════════�
 
 # التأكد من وجود المجلدات المطلوبة
 echo "→ Creating required directories..."
-mkdir -p /app/data /app/workspace /app/manus_pro/data
+mkdir -p /app/data /app/workspace
 chmod 755 /app/workspace
 chmod 700 /app/data
-chmod 700 /app/manus_pro/data
 
 # عرض معلومات البيئة
 echo "→ Environment:"
@@ -38,8 +37,8 @@ if [ ! -f "/app/run_server.py" ]; then
     exit 1
 fi
 
-if [ ! -d "/app/manus_pro/backend/src/manus_pro_server" ]; then
-    echo "ERROR: /app/manus_pro/backend/src/manus_pro_server not found!"
+if [ ! -d "/app/backend/src/manus_pro_server" ]; then
+    echo "ERROR: /app/backend/src/manus_pro_server not found!"
     exit 1
 fi
 

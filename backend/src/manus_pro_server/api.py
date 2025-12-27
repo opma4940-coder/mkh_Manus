@@ -138,7 +138,7 @@ async def upload_file(file: UploadFile = FastAPIFile(...)):
 app.include_router(v1)
 
 # Serve Frontend
-frontend_dist = REPO_ROOT / "manus_pro" / "frontend" / "dist"
+frontend_dist = REPO_ROOT / "frontend" / "dist"
 if frontend_dist.exists():
     app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
 

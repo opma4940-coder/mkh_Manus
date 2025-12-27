@@ -6,12 +6,15 @@ from pathlib import Path
 # Repository Root
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
-MANUS_PRO_DIR = REPO_ROOT / "manus_pro"
-DATA_DIR = MANUS_PRO_DIR / "data"
+DATA_DIR = REPO_ROOT / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_PATH = Path(os.getenv("MANUS_PRO_DB_PATH", str(DATA_DIR / "state.sqlite3")))
 FERNET_KEY_PATH = Path(os.getenv("MANUS_PRO_FERNET_KEY_PATH", str(DATA_DIR / "fernet.key")))
+
+# Create data directory if it doesn't exist
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+FERNET_KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 # Workspace - Full access within the repository workspace
 WORKSPACE_ROOT = Path(os.getenv("MANUS_PRO_WORKSPACE_ROOT", str(REPO_ROOT / "workspace"))).resolve()
