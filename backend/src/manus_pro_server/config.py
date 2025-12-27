@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # Repository Root
-REPO_ROOT = Path(__file__).resolve().parents[4]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 DATA_DIR = REPO_ROOT / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
