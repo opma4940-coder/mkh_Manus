@@ -1,0 +1,14 @@
+:root{
+  --color-bg-primary:#0B0E14;
+  --color-bg-secondary:#121826;
+  --color-bg-tertiary:#1A2236;
+  --color-text-primary:#E6EAF2;
+  --color-text-secondary:#A9B1C7;
+  --color-text-muted:#6B7280;
+  --color-accent:#4F8CFF;
+  --color-accent-hover:#6AA1FF;
+  --radius-md:10px;
+  --space-sm:12px;
+  --space-md:16px;
+  --font-base: "IBM Plex Sans Arabic", Inter, sans-serif;
+}
